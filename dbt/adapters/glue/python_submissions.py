@@ -69,7 +69,8 @@ class GluePythonJobHelper(PythonJobHelper):
             if state == 'AVAILABLE':
                 # Check for errors
                 output = response['Statement'].get('Output', {})
-                if output.get('Status') == 'ERROR':
+                status = output.get('Status', '')
+                if status.lower() == 'error':
                     error_message = output.get('ErrorName', '')
                     error_value = output.get('ErrorValue', '')
                     traceback = output.get('Traceback', '')
