@@ -13,24 +13,28 @@ schema = "{{ target_relation.schema }}"
 model_name = "{{ target_relation.identifier }}"
 print("DEBUG: Setting up model in schema: " + schema)
 
+# Save references to dbt-core's resolved ref/source functions
+_dbt_core_ref = ref
+_dbt_core_source = source
+
 class dbtObj:
     def __init__(self, table_function, schema, model_name):
         self.table_function = table_function
         self.schema = schema
         self.model_name = model_name
         self.this = schema + "." + model_name
-        
+
     def config(self, **config_args):
         # This is a placeholder for dbt config in Python models
         print("DEBUG: dbt.config called with:", config_args)
         pass
-        
-    def ref(self, name):
-        return self.table_function(name)
-        
-    def source(self, source_name, table_name):
-        return self.table_function(source_name + "." + table_name)
-        
+
+    def ref(self, *args, **kwargs):
+        return _dbt_core_ref(*args, **kwargs, dbt_load_df_function=self.table_function)
+
+    def source(self, *args):
+        return _dbt_core_source(*args, dbt_load_df_function=self.table_function)
+
     def is_incremental(self):
         # Check if the target table exists by trying to query it
         try:
@@ -131,10 +135,10 @@ print("DEBUG: materialized =", materialized)
 print("DEBUG: incremental_strategy =", incremental_strategy)
 print("DEBUG: unique_key =", unique_key)
 
-is_incremental_merge = (materialized == "incremental" and 
-                       incremental_strategy == "merge" and 
-                       unique_key != "None" and 
-                       unique_key != "none" and 
+is_incremental_merge = (materialized == "incremental" and
+                       incremental_strategy == "merge" and
+                       unique_key != "None" and
+                       unique_key != "none" and
                        unique_key != "")
 
 print("DEBUG: is_incremental_merge =", is_incremental_merge)
@@ -159,6 +163,7 @@ try:
         # For incremental merge, use MERGE INTO statement
         print("DEBUG: Using MERGE INTO for incremental update")
 
+
         # Parse unique_key (handle both string and list formats)
         if unique_key.startswith('[') and unique_key.endswith(']'):
             # List format: ['id'] or ['id', 'name']
@@ -168,13 +173,16 @@ try:
             # String format: 'id'
             unique_key_list = [unique_key]
 
+
         print("DEBUG: unique_key_list =", unique_key_list)
+
 
         # Create the merge conditions
         merge_conditions = []
         for key in unique_key_list:
             merge_conditions.append(f"target.{key} = source.{key}")
         merge_condition = " AND ".join(merge_conditions)
+
 
         merge_sql = f"""
         MERGE INTO {table_name} AS target
@@ -183,6 +191,7 @@ try:
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
         """
+
 
         print("DEBUG: Executing MERGE SQL:", merge_sql)
         spark.sql(merge_sql)
@@ -246,9 +255,20 @@ try:
 
 except Exception as e:
     print("DEBUG: Error creating Iceberg table:", str(e))
-    import traceback
-    traceback.print_exc()
-    raise e
+    print("DEBUG: Trying with CREATE TABLE IF NOT EXISTS...")
+    try:
+        create_sql_fallback = "CREATE TABLE IF NOT EXISTS " + table_name + " USING ICEBERG AS SELECT * FROM temp_python_df"
+        spark.sql(create_sql_fallback)
+        print("DEBUG: Iceberg table created with IF NOT EXISTS")
+
+        # Clean up temp view
+        spark.sql("DROP VIEW IF EXISTS temp_python_df")
+        print("DEBUG: Cleaned up temp view")
+
+    except Exception as e2:
+        print("DEBUG: Both Iceberg approaches failed:", str(e2))
+        # For Iceberg, we must use SQL - no fallback to saveAsTable
+        raise Exception("Failed to create Iceberg table: " + str(e2))
 {%- else -%}
 # For non-Iceberg tables, use the standard saveAsTable approach
 writer.saveAsTable("{{ target_relation.schema }}.{{ target_relation.identifier }}")
