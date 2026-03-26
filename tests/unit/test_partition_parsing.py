@@ -6,15 +6,23 @@ and hidden (Iceberg) partition transforms.
 """
 
 import re
+
 import pytest
 
 
 def parse_partitions(show_ddl):
     """Current implementation from python_utils.sql."""
-    match = re.search(r'PARTITIONED BY \(([^)]*)\)', show_ddl)
-    current_partitions = (
-        set(p.strip() for p in match.group(1).split(',')) if match else set()
-    )
+    print("*" * 100)
+    print(show_ddl)
+    print("*" * 100)
+    match = re.search(r"PARTITIONED\s+BY\s+\((.+)\)", show_ddl)
+    if match:
+        inner = match.group(1)
+        current_partitions = set(
+            col.lower() for col in re.findall(r"[a-zA-Z_]\w*(?:\([^)]*\))?", inner)
+        )
+    else:
+        current_partitions = set()
     return current_partitions
 
 
@@ -27,21 +35,33 @@ def _ddl(partition_clause):
 
 # --- Parsing ---
 
-@pytest.mark.parametrize("clause, expected", [
-    # Simple (Hive-style) - should work
-    ("event_date", {"event_date"}),
-    ("event_date, region", {"event_date", "region"}),
-    # Hidden transforms - currently broken
-    ("hours(ts)", {"hours(ts)"}),
-    ("days(ts)", {"days(ts)"}),
-    ("months(ts)", {"months(ts)"}),
-    ("years(ts)", {"years(ts)"}),
-    ("bucket(16, id)", {"bucket(16, id)"}),
-    ("truncate(10, city)", {"truncate(10, city)"}),
-    # Mixed
-    ("hours(ts), truncate(10, city), region", {"hours(ts)", "truncate(10, city)", "region"}),
-    ("hours(ts), bucket(16, id), truncate(10, city)", {"hours(ts)", "bucket(16, id)", "truncate(10, city)"}),
-])
+
+@pytest.mark.parametrize(
+    "clause, expected",
+    [
+        # Simple (Hive-style) - should work
+        ("event_date", {"event_date"}),
+        ("event_date, region", {"event_date", "region"}),
+        # Hidden transforms - currently broken
+        ("hours(ts)", {"hours(ts)"}),
+        ("days(ts)", {"days(ts)"}),
+        ("months(ts)", {"months(ts)"}),
+        ("years(ts)", {"years(ts)"}),
+        ("bucket(16, id)", {"bucket(16, id)"}),
+        ("truncate(10, city)", {"truncate(10, city)"}),
+        ("`athena_output`", {"athena_output"}),
+        ("`athena_output(100, heythere)`", {"athena_output(100, heythere)"}),
+        # Mixed
+        (
+            "hours(ts), truncate(10, city), region",
+            {"hours(ts)", "truncate(10, city)", "region"},
+        ),
+        (
+            "hours(ts), bucket(16, id), truncate(10, city)",
+            {"hours(ts)", "bucket(16, id)", "truncate(10, city)"},
+        ),
+    ],
+)
 def test_parse_partitions(clause, expected):
     assert parse_partitions(_ddl(clause)) == expected
 
@@ -56,33 +76,44 @@ def test_empty_partition_clause():
 
 # --- Case normalization ---
 
-@pytest.mark.parametrize("clause, expected", [
-    ("HOURS(ts)", {"hours(ts)"}),
-    ("Hours(ts), BUCKET(16, id), Region", {"hours(ts)", "bucket(16, id)", "region"}),
-])
+
+@pytest.mark.parametrize(
+    "clause, expected",
+    [
+        ("HOURS(ts)", {"hours(ts)"}),
+        (
+            "Hours(ts), BUCKET(16, id), Region",
+            {"hours(ts)", "bucket(16, id)", "region"},
+        ),
+    ],
+)
 def test_case_normalization(clause, expected):
     assert parse_partitions(_ddl(clause)) == expected
 
 
 # --- Partition evolution (add/drop) ---
 
-@pytest.mark.parametrize("current_clause, desired, exp_drop, exp_add", [
-    # No change
-    ("event_date", ["event_date"], set(), set()),
-    ("hours(ts)", ["hours(ts)"], set(), set()),
-    # Add field
-    ("event_date", ["event_date", "region"], set(), {"region"}),
-    # Drop field
-    ("event_date, region", ["event_date"], {"region"}, set()),
-    # Evolve simple -> hidden
-    ("ts", ["hours(ts)"], {"ts"}, {"hours(ts)"}),
-    # Change transform
-    ("hours(ts)", ["days(ts)"], {"hours(ts)"}, {"days(ts)"}),
-    # No partition -> partitioned
-    (None, ["bucket(16, id)"], set(), {"bucket(16, id)"}),
-    # Partitioned -> no partition
-    ("hours(ts)", [], {"hours(ts)"}, set()),
-])
+
+@pytest.mark.parametrize(
+    "current_clause, desired, exp_drop, exp_add",
+    [
+        # No change
+        ("event_date", ["event_date"], set(), set()),
+        ("hours(ts)", ["hours(ts)"], set(), set()),
+        # Add field
+        ("event_date", ["event_date", "region"], set(), {"region"}),
+        # Drop field
+        ("event_date, region", ["event_date"], {"region"}, set()),
+        # Evolve simple -> hidden
+        ("ts", ["hours(ts)"], {"ts"}, {"hours(ts)"}),
+        # Change transform
+        ("hours(ts)", ["days(ts)"], {"hours(ts)"}, {"days(ts)"}),
+        # No partition -> partitioned
+        (None, ["bucket(16, id)"], set(), {"bucket(16, id)"}),
+        # Partitioned -> no partition
+        ("hours(ts)", [], {"hours(ts)"}, set()),
+    ],
+)
 def test_partition_evolution(current_clause, desired, exp_drop, exp_add):
     current = parse_partitions(_ddl(current_clause))
     desired_set = set(f.strip().lower() for f in desired)

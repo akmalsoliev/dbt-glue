@@ -195,17 +195,42 @@ try:
         print("DEBUG: Using INSERT INTO for incremental append")
         {%- if partition_by is not none %}
         # Check current partition spec and evolve if needed (Iceberg partition evolution)
-        {%- if partition_by is string %}
-          {%- set desired_fields = [partition_by] %}
-        {%- else %}
-          {%- set desired_fields = partition_by %}
-        {%- endif %}
+          {%- if partition_by is string %}
+            {%- set desired_fields = [partition_by] %}
+          {%- else %}
+            {%- set desired_fields = partition_by %}
+          {%- endif %}
         desired_partitions = set({{ desired_fields | tojson }})
 
         import re
         show_ddl = spark.sql(f"SHOW CREATE TABLE {table_name}").collect()[0][0]
-        match = re.search(r'PARTITIONED BY \(([^)]*)\)', show_ddl)
-        current_partitions = set(p.strip() for p in match.group(1).split(',')) if match else set()
+        match = re.search(r'PARTITIONED\s+BY\s+\((.+)\)', show_ddl)
+        if match:
+          inner = match.group(1)
+          current_partitions = set(col.lower() for col in re.findall(r'[a-zA-Z_]\w*(?:\([^)]*\))?', inner))
+        else:
+          current_partitions = set()
+
+        print("DEBUG: Current partitions:", current_partitions)
+        print("DEBUG: Desired partitions:", desired_partitions)
+
+        if current_partitions != desired_partitions:
+            for field in current_partitions - desired_partitions:
+                drop_sql = f"ALTER TABLE {table_name} DROP PARTITION FIELD {field}"
+                print("DEBUG: Dropping partition field:", drop_sql)
+                spark.sql(drop_sql)
+            for field in desired_partitions - current_partitions:
+                add_sql = f"ALTER TABLE {table_name} ADD PARTITION FIELD {field}"
+                print("DEBUG: Adding partition field:", add_sql)
+                spark.sql(add_sql)
+            print("DEBUG: Partition spec evolved successfully")
+        else:
+            print("DEBUG: Partition spec already matches, no evolution needed")
+        {%- endif %}
+        insert_sql = "INSERT INTO " + table_name + " SELECT * FROM temp_python_df"
+        print("DEBUG: Executing SQL:", insert_sql)
+        spark.sql(insert_sql)
+        print("DEBUG: INSERT INTO completed successfully")
 
     else:
       # First run or full refresh - CREATE OR REPLACE with partitioning
