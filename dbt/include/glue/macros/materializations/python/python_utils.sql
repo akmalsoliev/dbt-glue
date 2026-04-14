@@ -190,7 +190,7 @@ try:
         spark.sql(merge_sql)
         print("DEBUG: MERGE completed successfully")
 
-     elif is_incremental_append:
+    elif is_incremental_append:
         # For incremental append, INSERT INTO existing table
         print("DEBUG: Using INSERT INTO for incremental append")
         {%- if partition_by is not none %}
