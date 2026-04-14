@@ -88,3 +88,35 @@ class TestGlueConnection(unittest.TestCase):
         call_kwargs = mock_client.create_session.call_args[1]
         default_args = call_kwargs["DefaultArguments"]
         assert "--additional-python-modules" not in default_args
+
+    @mock.patch("dbt.adapters.glue.gluedbapi.connection.get_session_waiter")
+    @mock.patch("dbt.adapters.glue.gluedbapi.connection.boto3")
+    def test_create_session_with_default_arguments_dict_and_list_values(
+        self, mock_boto3, mock_waiter
+    ) -> None:
+        """Test that default_arguments as a dict with list values joins them into comma-separated strings."""
+        mock_waiter.return_value = mock.Mock()
+        mock_session = mock_boto3.session.Session.return_value
+        mock_client = mock_session.client.return_value
+
+        credentials = GlueCredentials(
+            role_arn="arn:aws:iam::123456789012:role/GlueRole",
+            region="us-east-1",
+            workers=2,
+            worker_type="G.1X",
+            schema="test_schema",
+            default_arguments="--enable-metrics: true, --additional-python-modules:numpy,pandas,scikit-learn",
+        )
+
+        connection = GlueConnection(credentials)
+        connection._create_session("test-session-id")
+
+        mock_client.create_session.assert_called_once()
+        call_kwargs = mock_client.create_session.call_args[1]
+        default_args = call_kwargs["DefaultArguments"]
+
+        assert default_args["--enable-metrics"] == "true"
+        assert "--additional-python-modules" in default_args
+        assert (
+            default_args["--additional-python-modules"] == "numpy,pandas,scikit-learn"
+        )
