@@ -145,6 +145,7 @@ print("DEBUG: is_incremental_merge =", is_incremental_merge)
 
 # Check if target table already exists (for incremental logic)
 table_exists = False
+is_incremental_append = False
 try:
     spark.sql(f"DESCRIBE TABLE {table_name}")
     table_exists = True
