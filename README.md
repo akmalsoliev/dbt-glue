@@ -164,7 +164,7 @@ Please to update variables between **`<>`**, here are explanations of these argu
 
 ### Configuration of the local environment
 
-Because **`dbt`** and **`dbt-glue`** adapter are compatible with Python versions 3.7, 3.8, and 3.9, check the version of Python:
+Because **`dbt`** and **`dbt-glue`** adapter are compatible with Python versions 3.10, 3.11, 3.12, and 3.13, check the version of Python:
 
 ```bash
 $ python3 --version
@@ -248,6 +248,9 @@ The table below describes all the options.
 | datalake_formats	                       | The ACID datalake format that you want to use if you are doing merge, can be `hudi`, `iceberg` or `delta`                                                                                                                                                                                         |no|
 | use_arrow	                           | (experimental) use an arrow file instead of stdout to have better scalability.                                                                                                                                                                                                                    |no|
 | enable_spark_seed_casting	              | Allows spark to cast the columns depending on the specified model column types. Default `False`.        |no|
+| statement_poll_interval	              | Interval in seconds between polls for statement completion. Must be >= 1. Default `1.0`.        |no|
+| boto_retry_mode	                      | The botocore retry mode used by the adapter's AWS clients and by the boto3 clients created inside the Glue session. One of `legacy`, `standard` or `adaptive`. Default `adaptive`, which adds client-side throttling and is the most resilient to `ThrottlingException`. |no|
+| boto_retry_max_attempts	              | The maximum number of attempts botocore makes per AWS API call. Must be greater than 0. Default `10`. Increase this if you still see `ThrottlingException` / `Rate exceeded` errors on Glue APIs. |no|
 
 ## Configs
 
