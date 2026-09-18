@@ -164,7 +164,7 @@ Please to update variables between **`<>`**, here are explanations of these argu
 
 ### Configuration of the local environment
 
-Because **`dbt`** and **`dbt-glue`** adapter are compatible with Python versions 3.7, 3.8, and 3.9, check the version of Python:
+Because **`dbt`** and **`dbt-glue`** adapter are compatible with Python versions 3.10, 3.11, 3.12, and 3.13, check the version of Python:
 
 ```bash
 $ python3 --version
@@ -212,6 +212,7 @@ idle_timeout: 10
 schema: "dbt_demo"
 session_provisioning_timeout_in_seconds: 120
 location: "s3://dbt_demo_bucket/dbt_demo_data"
+root_location: False
 ```
 
 The table below describes all the options.
@@ -228,6 +229,7 @@ The table below describes all the options.
 | schema	                                 | The schema used to organize data stored in Amazon S3.Additionally, is the database in AWS Lake Formation that stores metadata tables in the Data Catalog.	                                                                                                                                        | yes       |
 | session_provisioning_timeout_in_seconds | The timeout in seconds for AWS Glue interactive session provisioning.	                                                                                                                                                                                                                            | yes       |
 | location	                               | The Amazon S3 location of your target data.	                                                                                                                                                                                                                                                      | yes       |
+| root_location	                           | By default the adapter stores data at `location`/`schema`/`table`. Set to `true` to omit the schema segment and store data at `location`/`table` instead. Default `false`.	                                                                                                                       | no        |
 | query_timeout_in_minutes	               | The timeout in minutes for a signle query. Default is 300                                                                                                                                                                                                                                         | no        |
 | idle_timeout	                           | The AWS Glue session idle timeout in minutes. (The session stops after being idle for the specified amount of time)	                                                                                                                                                                              | no        |
 | glue_version	                           | The version of AWS Glue for this session to use. Currently, the only valid options are 2.0, 3.0 and 4.0. The default value is 4.0.	                                                                                                                                                               | no        |
@@ -246,6 +248,9 @@ The table below describes all the options.
 | datalake_formats	                       | The ACID datalake format that you want to use if you are doing merge, can be `hudi`, `iceberg` or `delta`                                                                                                                                                                                         |no|
 | use_arrow	                           | (experimental) use an arrow file instead of stdout to have better scalability.                                                                                                                                                                                                                    |no|
 | enable_spark_seed_casting	              | Allows spark to cast the columns depending on the specified model column types. Default `False`.        |no|
+| statement_poll_interval	              | Interval in seconds between polls for statement completion. Must be >= 1. Default `1.0`.        |no|
+| boto_retry_mode	                      | The botocore retry mode used by the adapter's AWS clients and by the boto3 clients created inside the Glue session. One of `legacy`, `standard` or `adaptive`. Default `adaptive`, which adds client-side throttling and is the most resilient to `ThrottlingException`. |no|
+| boto_retry_max_attempts	              | The maximum number of attempts botocore makes per AWS API call. Must be greater than 0. Default `10`. Increase this if you still see `ThrottlingException` / `Rate exceeded` errors on Glue APIs. |no|
 
 ## Configs
 
