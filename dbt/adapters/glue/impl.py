@@ -207,6 +207,7 @@ class GlueAdapter(SQLAdapter):
                             schema=schema_relation.schema,
                             identifier=table.get("Name"),
                             type=self.relation_type_map.get(table.get("TableType")),
+                            quote_policy=schema_relation.quote_policy,
                         )
                     )
             return relations
@@ -294,7 +295,8 @@ class GlueAdapter(SQLAdapter):
                         database=computed_schema,
                         schema=computed_schema,
                         identifier=identifier,
-                        type="table",
+                        type="table",,
+                        quote_policy=self.config.quoting,
                     )
                 except Exception as e:
                     return None
@@ -320,7 +322,8 @@ class GlueAdapter(SQLAdapter):
                 type=self.relation_type_map.get(
                     response.get("Table", {}).get("TableType", "Table")
                 ),
-                is_delta=is_delta,
+                is_delta=is_delta,,
+                quote_policy=self.config.quoting,
             )
             logger.debug(
                 f"""schema : {schema}
@@ -338,7 +341,7 @@ class GlueAdapter(SQLAdapter):
         iceberg_catalog = self.get_custom_iceberg_catalog_namespace()
         current_relation = self.Relation.create(
             database=schema, schema=schema, identifier=identifier
-        )
+        , quote_policy=self.config.quoting)
         existing_relation_type = self.get_table_type(current_relation)
         already_exist_iceberg = existing_relation_type == "iceberg_table"
         non_null_catalog = iceberg_catalog is not None
