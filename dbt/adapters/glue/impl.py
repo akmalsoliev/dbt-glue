@@ -295,7 +295,7 @@ class GlueAdapter(SQLAdapter):
                         database=computed_schema,
                         schema=computed_schema,
                         identifier=identifier,
-                        type="table",,
+                        type="table",
                         quote_policy=self.config.quoting,
                     )
                 except Exception as e:
@@ -322,7 +322,7 @@ class GlueAdapter(SQLAdapter):
                 type=self.relation_type_map.get(
                     response.get("Table", {}).get("TableType", "Table")
                 ),
-                is_delta=is_delta,,
+                is_delta=is_delta,
                 quote_policy=self.config.quoting,
             )
             logger.debug(
