@@ -340,8 +340,8 @@ class GlueAdapter(SQLAdapter):
     def __compute_schema_based_on_type(self, schema, identifier):
         iceberg_catalog = self.get_custom_iceberg_catalog_namespace()
         current_relation = self.Relation.create(
-            database=schema, schema=schema, identifier=identifier
-        , quote_policy=self.config.quoting)
+            database=schema, schema=schema, identifier=identifier, quote_policy=self.config.quoting
+        )
         existing_relation_type = self.get_table_type(current_relation)
         already_exist_iceberg = existing_relation_type == "iceberg_table"
         non_null_catalog = iceberg_catalog is not None
