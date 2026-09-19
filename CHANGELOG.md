@@ -18,12 +18,17 @@
 - Fixed incorrect error response assumption in Glue statement output. The `Status` field from `Statement.Output` should only return lowercase `ok` or `error`. The previous check `output.get('Status') == 'ERROR'` would miss non-uppercase, causing errors to silently pass as successful executions.
 - Fixed incorrect behaviour where dbt-glue adapter does not quote the schema and identifier when config is set.
 - Fixed incremental append and partition_by support for Iceberg Python
+<<<<<<< HEAD
 - Added `root_location` profile option to store table data at `location`/`table` (omitting the schema segment) instead of the default `location`/`schema`/`table`.
 - Centralized S3 location path construction into a single `_build_location` helper, fixing Windows path joins that previously used backslashes.
 - Secured fork-PR integration test workflows against pwn requests (TOCTOU) by replacing the `pull_request_target` label gate with a `/test glue <sha>` maintainer command that pins the reviewed commit
 - Fixed a vulnerable transitive `sqlparse` dependency by upgrading dbt-core past 1.12.0, which raises the minimum required `sqlparse` version (#690). dbt-core 1.11 is skipped because its `sqlparse` constraint still permitted the vulnerable version.
 - Dropped Python 3.9 support, since dbt-core 1.12 and dbt-spark 1.11 both require Python 3.10+ (#657).
 - Upgrade dependencies: dbt-core 1.12.3, dbt-spark 1.11.0, dbt-tests-adapter 1.20.0.
+||||||| 43efb9f
+=======
+- Fixed a cross-process race when reusable sessions are enabled: starting two dbt runs at nearly the same time with the same `glue_session_id` could fail with a session creation error, because both processes created the same session id concurrently.
+>>>>>>> fix_creating_session_when_created
 
 ## 1.10.19
 
