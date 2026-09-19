@@ -8,6 +8,7 @@ from dbt.adapters.glue.credentials import GlueCredentials
 from dbt.adapters.glue.gluedbapi.commons import GlueStatement
 from dbt.adapters.glue.util import get_session_waiter
 import threading
+import time
 import uuid
 from dbt.adapters.events.logging import AdapterLogger
 
@@ -15,6 +16,7 @@ from dbt.adapters.exceptions.connection import FailedToConnectError
 from dbt_common.exceptions import ExecutableError
 
 logger = AdapterLogger("Glue")
+
 
 class GlueSessionState:
     READY = "READY"
@@ -30,6 +32,10 @@ class GlueConnection:
     _boto3_client_lock = threading.Lock()
     _connect_lock = threading.Lock()
 
+    # How long to wait for a deleted session to disappear before re-creating it.
+    SESSION_DELETION_TIMEOUT_IN_SECONDS = 60
+    SESSION_DELETION_POLL_INTERVAL_IN_SECONDS = 2
+
     def __init__(self, credentials: GlueCredentials, session_id_suffix: str = None):
         self.credentials = credentials
         self._session_id_suffix = session_id_suffix
@@ -43,7 +49,6 @@ class GlueConnection:
         for key in self.credentials._connection_keys():
             self._create_session_config[key] = getattr(self.credentials, key)
 
-
     def _build_session_id(
         self,
     ) -> str:
@@ -53,22 +58,27 @@ class GlueConnection:
         If `enable_session_per_model` is enabled, scope for session reuse (by same model, by other models, across dbt runs) is limited.
         """
         # ID can be max 255 bytes long
-        iam_role_name = self._create_session_config["role_arn"].partition('/')[2] or self._create_session_config["role_arn"]
+        iam_role_name = (
+            self._create_session_config["role_arn"].partition("/")[2]
+            or self._create_session_config["role_arn"]
+        )
         iam_role_name = iam_role_name[:150]
 
         # Base id
         if self.credentials.glue_session_id:
             id = self.credentials.glue_session_id
         else:
-            id = 'dbt-glue'
+            id = "dbt-glue"
 
         if self._session_id_suffix:
             # Glue Session Names must not have periods, so replace with underscores
-            sanitized_suffix = self._session_id_suffix.replace('.', '_')
-            id = f'{id}__{sanitized_suffix}'
+            sanitized_suffix = self._session_id_suffix.replace(".", "_")
+            id = f"{id}__{sanitized_suffix}"
 
-        if not self._session_id_suffix and (self.credentials.enable_session_per_model or not self.credentials.glue_session_reuse):
-            id = f'{id}__{iam_role_name}__{uuid.uuid4()}'
+        if not self._session_id_suffix and (
+            self.credentials.enable_session_per_model or not self.credentials.glue_session_reuse
+        ):
+            id = f"{id}__{iam_role_name}__{uuid.uuid4()}"
 
         return id
 
@@ -83,22 +93,22 @@ class GlueConnection:
 
         if not self.session_id:
             # _session not found, build a session id and inject via a placeholder _session for state checking
-            self._session = {
-                "Session": {"Id": self._build_session_id()}
-            }
-        logger.debug(f'Using session id {self.session_id} to connect')
+            self._session = {"Session": {"Id": self._build_session_id()}}
+        logger.debug(f"Using session id {self.session_id} to connect")
 
         try:
             _current_state = self.state
-            logger.debug(f'Current session state is {_current_state}')
+            logger.debug(f"Current session state is {_current_state}")
             # if current state is READY, nothing else to do
 
             if _current_state is None:
                 # No session exists, create
-                logger.debug(f'No session exists with id {self.session_id}, creating a new one')
+                logger.debug(f"No session exists with id {self.session_id}, creating a new one")
                 self._create_session(session_id=self.session_id)
 
-                logger.debug(f'Session creation initiated for {self.session_id}, waiting it to be READY, currently in state {self.state}')
+                logger.debug(
+                    f"Session creation initiated for {self.session_id}, waiting it to be READY, currently in state {self.state}"
+                )
                 self._session_waiter.wait(Id=self.session_id)
 
             elif _current_state in [
@@ -108,16 +118,24 @@ class GlueConnection:
                 # Another action already in progress wait for success or failure
                 # If fails, try to re-create
                 try:
-                    logger.debug(f'Waiting for session {self.session_id} to be READY, currently in state {self.state}')
+                    logger.debug(
+                        f"Waiting for session {self.session_id} to be READY, currently in state {self.state}"
+                    )
                     self._session_waiter.wait(Id=self.session_id)
                 except WaiterError as we:
                     if "Max attempts exceeded" in str(we):
-                        raise TimeoutError(f"GlueSession took more than {self.credentials.session_provisioning_timeout_in_seconds} seconds to be ready")
+                        raise TimeoutError(
+                            f"GlueSession took more than {self.credentials.session_provisioning_timeout_in_seconds} seconds to be ready"
+                        )
                     else:
-                        logger.debug(f"Session for {self.session_id} not usable, currently is in {self.state} state. Attempting to re-create...")
+                        logger.debug(
+                            f"Session for {self.session_id} not usable, currently is in {self.state} state. Attempting to re-create..."
+                        )
                         self._recreate_session(session_id=self.session_id)
 
-                        logger.debug(f'Session recreation initiated for {self.session_id}, waiting it to be READY, currently in state {self.state}')
+                        logger.debug(
+                            f"Session recreation initiated for {self.session_id}, waiting it to be READY, currently in state {self.state}"
+                        )
                         self._session_waiter.wait(Id=self.session_id)
 
             elif _current_state in [
@@ -128,7 +146,9 @@ class GlueConnection:
                 # Delete stale session and re-create
                 self._recreate_session(session_id=self.session_id)
 
-                logger.debug(f'Session recreation initiated for {self.session_id}, waiting it to be READY, currently in {self.state} state')
+                logger.debug(
+                    f"Session recreation initiated for {self.session_id}, waiting it to be READY, currently in {self.state} state"
+                )
                 self._session_waiter.wait(Id=self.session_id)
 
             # At this point, session should be in READY state
@@ -138,11 +158,11 @@ class GlueConnection:
 
         except WaiterError as we:
             # If it comes here, creation failed, do not re-try (loop)
-            logger.exception(f'Connect failed to setup a session for {self.session_id}')
+            logger.exception(f"Connect failed to setup a session for {self.session_id}")
             raise FailedToConnectError(str(we))
         except Exception as e:
             # If it comes here, creation failed, do not re-try (loop)
-            logger.exception(f'Error during connect for session {self.session_id}')
+            logger.exception(f"Error during connect for session {self.session_id}")
             raise FailedToConnectError(str(e))
 
     def _create_session(
@@ -152,20 +172,22 @@ class GlueConnection:
         """Inititates the creation of a new Glue session from configuration."""
         logger.debug("GlueConnection _create_session called")
 
-        args = {
-            "--enable-glue-datacatalog": "true"
-        }
+        args = {"--enable-glue-datacatalog": "true"}
 
-        if (self._create_session_config["default_arguments"] is not None):
-            args.update(self._string_to_dict(self._create_session_config["default_arguments"].replace(' ', '')))
+        if self._create_session_config["default_arguments"] is not None:
+            args.update(
+                self._string_to_dict(
+                    self._create_session_config["default_arguments"].replace(" ", "")
+                )
+            )
 
-        if (self._create_session_config["extra_jars"] is not None):
+        if self._create_session_config["extra_jars"] is not None:
             args["--extra-jars"] = f"{self._create_session_config['extra_jars']}"
 
-        if (self._create_session_config["conf"] is not None):
+        if self._create_session_config["conf"] is not None:
             args["--conf"] = f"{self._create_session_config['conf']}"
 
-        if (self._create_session_config["extra_py_files"] is not None):
+        if self._create_session_config["extra_py_files"] is not None:
             args["--extra-py-files"] = f"{self._create_session_config['extra_py_files']}"
 
         additional_args = {}
@@ -173,21 +195,25 @@ class GlueConnection:
         additional_args["WorkerType"] = self._create_session_config["worker_type"]
         additional_args["IdleTimeout"] = self._create_session_config["idle_timeout"]
         additional_args["Timeout"] = self._create_session_config["query_timeout_in_minutes"]
-        additional_args["RequestOrigin"] = 'dbt-glue'
+        additional_args["RequestOrigin"] = "dbt-glue"
 
-        if (self._create_session_config['glue_version'] is not None):
+        if self._create_session_config["glue_version"] is not None:
             additional_args["GlueVersion"] = f"{self._create_session_config['glue_version']}"
 
-        if (self._create_session_config['security_configuration'] is not None):
-            additional_args["SecurityConfiguration"] = f"{self._create_session_config['security_configuration']}"
+        if self._create_session_config["security_configuration"] is not None:
+            additional_args[
+                "SecurityConfiguration"
+            ] = f"{self._create_session_config['security_configuration']}"
 
-        if (self._create_session_config["connections"] is not None):
-            additional_args["Connections"] = {"Connections": list(set(self._create_session_config["connections"].split(',')))}
+        if self._create_session_config["connections"] is not None:
+            additional_args["Connections"] = {
+                "Connections": list(set(self._create_session_config["connections"].split(",")))
+            }
 
-        if (self._create_session_config["tags"] is not None):
+        if self._create_session_config["tags"] is not None:
             additional_args["Tags"] = self._string_to_dict(self._create_session_config["tags"])
 
-        if (self.credentials.datalake_formats is not None):
+        if self.credentials.datalake_formats is not None:
             args["--datalake-formats"] = f"{self.credentials.datalake_formats}"
 
         try:
@@ -195,17 +221,24 @@ class GlueConnection:
                 Id=session_id,
                 Role=self._create_session_config["role_arn"],
                 DefaultArguments=args,
-                Command={
-                    "Name": "glueetl",
-                    "PythonVersion": "3"
-                },
-                **additional_args
+                Command={"Name": "glueetl", "PythonVersion": "3"},
+                **additional_args,
             )
         except self.client.exceptions.AlreadyExistsException:
             logger.debug(
                 f"Session {session_id} already exists, created by a concurrent process. Reusing it."
             )
             self._session = {"Session": {"Id": session_id}}
+        except self.client.exceptions.InvalidInputException as e:
+            # Glue often returns InvalidInputException with an empty message, which
+            # leaves nothing to debug from. Report what was sent instead. Argument
+            # values are omitted, only their names, as they can carry credentials.
+            raise FailedToConnectError(
+                f"Glue rejected the CreateSession call for session id '{session_id}' "
+                f"({len(session_id.encode())} bytes): {e}. "
+                f"Session parameters: {additional_args}, "
+                f"DefaultArguments: {sorted(args)}"
+            ) from e
 
         return
 
@@ -216,9 +249,33 @@ class GlueConnection:
         """Deletes any existing session with session_id and creates a new one."""
         logger.debug("GlueConnection _recreate_session called")
         self.delete_session(session_id=session_id)
-        logger.debug(f'Deleted session with id {session_id}')
+        logger.debug(f"Deleted session with id {session_id}")
+
+        # DeleteSession only starts the deletion. While the entry is still in
+        # DELETING, Glue rejects CreateSession for the same id with an
+        # InvalidInputException that carries no message.
+        self._wait_for_session_deletion(session_id=session_id)
 
         self._create_session(session_id=session_id)
+
+    def _wait_for_session_deletion(self, session_id: str) -> None:
+        """Blocks until `session_id` is gone from Glue, or the timeout elapses."""
+        deadline = time.monotonic() + self.SESSION_DELETION_TIMEOUT_IN_SECONDS
+        while True:
+            try:
+                status = self.client.get_session(Id=session_id).get("Session", {}).get("Status")
+            except self.client.exceptions.EntityNotFoundException:
+                self._state = None
+                return
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    f"Session {session_id} is still in {status} state "
+                    f"{self.SESSION_DELETION_TIMEOUT_IN_SECONDS} seconds after it was deleted; "
+                    f"re-creating it anyway."
+                )
+                return
+            logger.debug(f"Waiting for session {session_id} to be deleted, it is in {status} state")
+            time.sleep(self.SESSION_DELETION_POLL_INTERVAL_IN_SECONDS)
 
         return
 
@@ -252,13 +309,13 @@ class GlueConnection:
             logger.debug(f"Executing statement (SQLPROXY): {statement}")
             statement.execute()
         except Exception as e:
-            logger.error(f"Error in GlueCursor (session_id={self.session_id}, SQLPROXY) execute: {e}")
+            logger.error(
+                f"Error in GlueCursor (session_id={self.session_id}, SQLPROXY) execute: {e}"
+            )
             raise ExecutableError(str(e))
 
         if not self.credentials.schema:
-            raise ValueError(
-                "'schema' is required in profiles.yml but was not provided"
-            )
+            raise ValueError("'schema' is required in profiles.yml but was not provided")
 
         statement = GlueStatement(
             client=self.client,
@@ -270,7 +327,9 @@ class GlueConnection:
             logger.debug(f"Executing statement (use database) : {statement}")
             statement.execute()
         except Exception as e:
-            logger.error(f"Error in GlueCursor (session_id={self.session_id}, SQLPROXY) execute: {e}")
+            logger.error(
+                f"Error in GlueCursor (session_id={self.session_id}, SQLPROXY) execute: {e}"
+            )
             raise ExecutableError(str(e))
 
     @property
@@ -294,16 +353,18 @@ class GlueConnection:
             # reference on why lock is required - https://stackoverflow.com/a/61943955/6034432
             with self._boto3_client_lock:
                 session = boto3.session.Session()
-                self._client = session.client("glue", region_name=self.credentials.region, config=config)
-                self._session_waiter = get_session_waiter(client=self._client, timeout=self.credentials.session_provisioning_timeout_in_seconds)
+                self._client = session.client(
+                    "glue", region_name=self.credentials.region, config=config
+                )
+                self._session_waiter = get_session_waiter(
+                    client=self._client,
+                    timeout=self.credentials.session_provisioning_timeout_in_seconds,
+                )
         return self._client
 
     def cancel_statement(self, statement_id):
         logger.debug("GlueConnection cancel_statement called")
-        self.client.cancel_statement(
-            SessionId=self.session_id,
-            Id=statement_id
-        )
+        self.client.cancel_statement(SessionId=self.session_id, Id=statement_id)
 
     def cancel(self):
         logger.debug("GlueConnection cancel called")
@@ -314,12 +375,12 @@ class GlueConnection:
 
     def delete_session(self, session_id):
         try:
-            request_origin = 'dbt-glue-'+self.credentials.role_arn.partition('/')[2] or self.credentials.role_arn
-            request_origin = request_origin.replace('/', '')
-            self.client.delete_session(
-                Id=session_id,
-                RequestOrigin=request_origin
+            request_origin = (
+                "dbt-glue-" + self.credentials.role_arn.partition("/")[2]
+                or self.credentials.role_arn
             )
+            request_origin = request_origin.replace("/", "")
+            self.client.delete_session(Id=session_id, RequestOrigin=request_origin)
         except Exception as e:
             logger.debug(f"delete session {session_id} error")
             raise e
@@ -357,7 +418,9 @@ class GlueConnection:
             logger.debug("session is not set to close_session")
             return
         if self.credentials.glue_session_reuse:
-            logger.debug(f"reuse session, do not stop_session for {self.session_id} in {self.state} state")
+            logger.debug(
+                f"reuse session, do not stop_session for {self.session_id} in {self.state} state"
+            )
             return
         try:
             self._session_waiter.wait(Id=self.session_id)
@@ -407,7 +470,9 @@ class GlueConnection:
     def _string_to_dict(self, value_to_convert):
         value_in_dictionary = {}
         for i in value_to_convert.split(","):
-            value_in_dictionary[i.split("=")[0].strip('\'').replace("\"", "")] = i.split("=")[1].strip('"\'')
+            value_in_dictionary[i.split("=")[0].strip("'").replace('"', "")] = i.split("=")[
+                1
+            ].strip("\"'")
         return value_in_dictionary
 
 

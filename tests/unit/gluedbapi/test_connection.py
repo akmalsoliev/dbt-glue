@@ -1,6 +1,7 @@
 import unittest
 from unittest import mock
 
+from dbt.adapters.exceptions.connection import FailedToConnectError
 from dbt.adapters.glue.credentials import GlueCredentials
 from dbt.adapters.glue.gluedbapi.connection import GlueConnection
 from moto import mock_aws
@@ -37,7 +38,6 @@ class TestGlueConnection(unittest.TestCase):
         assert retries["max_attempts"] == 4
         assert retries["mode"] == "standard"
 
-<<<<<<< HEAD
     def test_render_sqlproxy_injects_retry_config(self) -> None:
         credentials = GlueCredentials(
             boto_retry_mode="standard",
@@ -191,8 +191,7 @@ class TestGlueConnection(unittest.TestCase):
             "ServerSideEncryption": "aws:kms",
             "SSEKMSKeyId": "abc-123",
         }
-||||||| 43efb9f
-=======
+
     def test_create_session_tolerates_concurrent_already_exists(self) -> None:
         """A concurrent dbt process may create the reusable session first.
 
@@ -220,18 +219,44 @@ class TestGlueConnection(unittest.TestCase):
         """Errors other than AlreadyExistsException must still propagate."""
         connection = GlueConnection(GlueCredentials())
 
-        mock_client = mock.Mock()
-
-        class AlreadyExistsException(Exception):
-            pass
-
-        class InvalidInputException(Exception):
-            pass
-
-        mock_client.exceptions.AlreadyExistsException = AlreadyExistsException
-        mock_client.create_session.side_effect = InvalidInputException("bad input")
+        mock_client = self._mock_client_with_exceptions()
+        mock_client.create_session.side_effect = RuntimeError("boom")
         connection._client = mock_client
 
-        with self.assertRaises(InvalidInputException):
+        with self.assertRaises(RuntimeError):
             connection._create_session(session_id="dbt-glue")
->>>>>>> fix_creating_session_when_created
+
+    def test_create_session_reports_parameters_on_invalid_input(self) -> None:
+        """Glue answers CreateSession with an empty InvalidInputException message.
+
+        Without the parameters that were sent there is nothing to debug from, so
+        the error must carry the session id and the session parameters.
+        """
+        connection = GlueConnection(GlueCredentials())
+
+        mock_client = self._mock_client_with_exceptions()
+        mock_client.create_session.side_effect = mock_client.exceptions.InvalidInputException("")
+        connection._client = mock_client
+
+        with self.assertRaises(FailedToConnectError) as raised:
+            connection._create_session(session_id="dbt-glue__some__model")
+
+        message = str(raised.exception)
+        assert "dbt-glue__some__model" in message
+        assert "RequestOrigin" in message
+
+    @staticmethod
+    def _mock_client_with_exceptions() -> mock.Mock:
+        """A glue client mock whose `exceptions` are catchable classes.
+
+        `mock.Mock()` hands back a Mock for every `exceptions.X`, and an `except`
+        clause against one of those raises TypeError instead of matching.
+        """
+        mock_client = mock.Mock()
+        mock_client.exceptions.AlreadyExistsException = type(
+            "AlreadyExistsException", (Exception,), {}
+        )
+        mock_client.exceptions.InvalidInputException = type(
+            "InvalidInputException", (Exception,), {}
+        )
+        return mock_client
