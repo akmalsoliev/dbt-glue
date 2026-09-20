@@ -7,6 +7,7 @@ from dbt.adapters.glue.gluedbapi.connection import GlueConnection
 from moto import mock_aws
 import boto3
 
+
 class TestGlueConnection(unittest.TestCase):
     @mock_aws
     def test_connection_state_is_none_for_not_found_session_id(self) -> None:
@@ -90,9 +91,7 @@ class TestGlueConnection(unittest.TestCase):
         glue_client = mock.Mock()
         glue_client.get_session.return_value = {"Session": {}}
 
-        namespace = self._exec_preamble(
-            GlueCredentials(boto_retry_mode=malicious), glue_client
-        )
+        namespace = self._exec_preamble(GlueCredentials(boto_retry_mode=malicious), glue_client)
 
         namespace["Config"].assert_called_once_with(
             retries={"max_attempts": 10, "mode": malicious}
@@ -107,9 +106,7 @@ class TestGlueConnection(unittest.TestCase):
         }
         glue_client.get_security_configuration.return_value = {
             "SecurityConfiguration": {
-                "EncryptionConfiguration": {
-                    "S3Encryption": [{"S3EncryptionMode": "SSE-S3"}]
-                }
+                "EncryptionConfiguration": {"S3Encryption": [{"S3EncryptionMode": "SSE-S3"}]}
             }
         }
 
@@ -130,9 +127,7 @@ class TestGlueConnection(unittest.TestCase):
         }
         glue_client.get_security_configuration.return_value = {
             "SecurityConfiguration": {
-                "EncryptionConfiguration": {
-                    "S3Encryption": [{"S3EncryptionMode": "SSE-S3"}]
-                }
+                "EncryptionConfiguration": {"S3Encryption": [{"S3EncryptionMode": "SSE-S3"}]}
             }
         }
 

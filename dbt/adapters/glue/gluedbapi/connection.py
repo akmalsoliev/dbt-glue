@@ -274,7 +274,9 @@ class GlueConnection:
                     f"re-creating it anyway."
                 )
                 return
-            logger.debug(f"Waiting for session {session_id} to be deleted, it is in {status} state")
+            logger.debug(
+                f"Waiting for session {session_id} to be deleted, it is in {status} state"
+            )
             time.sleep(self.SESSION_DELETION_POLL_INTERVAL_IN_SECONDS)
 
         return
